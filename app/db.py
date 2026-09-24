@@ -17,6 +17,17 @@ def conn():
     return psycopg.connect(_db_url(), row_factory=dict_row)
 
 
+def _normalize_job(row: Optional[dict]) -> Optional[dict]:
+    """psycopg returns UUID columns as uuid.UUID; templates and paths need str."""
+    if not row:
+        return row
+    out = dict(row)
+    job_id = out.get("id")
+    if job_id is not None:
+        out["id"] = str(job_id)
+    return out
+
+
 def new_job(tier: str, email: str, industry: Optional[str], company: Optional[str]) -> str:
     job_id = str(uuid.uuid4())
     with conn() as c, c.cursor() as cur:
@@ -32,7 +43,7 @@ def new_job(tier: str, email: str, industry: Optional[str], company: Optional[st
 def get_job(job_id: str) -> Optional[dict]:
     with conn() as c, c.cursor() as cur:
         cur.execute("SELECT * FROM jobs WHERE id=%s", (job_id,))
-        return cur.fetchone()
+        return _normalize_job(cur.fetchone())
 
 
 def update_job(job_id: str, **fields: Any) -> None:
@@ -68,10 +79,10 @@ def audit(job_id: str, actor: str, step: str, *,
 def list_review_jobs() -> list[dict]:
     with conn() as c, c.cursor() as cur:
         cur.execute("SELECT * FROM jobs WHERE status='review' ORDER BY created_at ASC")
-        return cur.fetchall()
+        return [_normalize_job(r) for r in cur.fetchall()]
 
 
 def list_all_jobs(limit: int = 100) -> list[dict]:
     with conn() as c, c.cursor() as cur:
         cur.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT %s", (limit,))
-        return cur.fetchall()
+        return [_normalize_job(r) for r in cur.fetchall()]

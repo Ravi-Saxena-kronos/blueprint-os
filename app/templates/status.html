@@ -20,7 +20,12 @@
 </section>
 {% elif job.status == 'error' %}
 <section class="deliverable-card error">
+  <h2>Could not finish blueprint</h2>
+  {% if job.brief and job.brief.get('last_error') %}
+  <p>{{ job.brief.get('last_error') }}</p>
+  {% else %}
   <p>Something went wrong. Note your reference <code>{{ job.id[:8] }}</code> if you contact support.</p>
+  {% endif %}
 </section>
 {% else %}
 <section class="deliverable-card pending">

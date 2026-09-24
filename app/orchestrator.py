@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 
 from db import audit, get_job, update_job
-from llm import json_call, spend_ok
+from llm import LLMUserError, json_call, spend_ok
 from schema import Blueprint
 
 CLASSIFY_SYS = (
@@ -109,6 +109,11 @@ def run_research_and_draft(job_id: str) -> None:
         if (job.get("brief") or {}).get("voice_express"):
             run_deliver(job_id)
             audit(job_id, actor="orchestrator", step="voice_express", approval="auto_deliver")
+    except LLMUserError as e:
+        msg = str(e)
+        audit(job_id, actor="orchestrator", step="error", meta={"error": msg[:500]})
+        brief_err = {**brief, "last_error": msg}
+        update_job(job_id, status="error", brief=brief_err)
     except Exception as e:
         audit(job_id, actor="orchestrator", step="error", meta={"error": str(e)[:500]})
         update_job(job_id, status="error")

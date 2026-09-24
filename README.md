@@ -28,7 +28,8 @@ Required for production on Vercel:
 - `DEPLOY_TARGET=vercel`
 - `APP_URL` — your canonical HTTPS URL (e.g. `https://your-app.vercel.app`)
 - `DATABASE_URL` — Neon/Supabase Postgres
-- `STRIPE_*`, `OPENAI_API_KEY`
+- `STRIPE_*` (or `FREE_ACCESS_MODE=1`)
+- **LLM (one of):** `GROQ_API_KEY` (recommended free tier), `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, or `OPENAI_API_KEY` — optional `LLM_PROVIDER=groq` and `LLM_MODEL=`
 - `REVIEW_PASSWORD`, `JWT_SECRET`, `INTERNAL_JOB_SECRET`
 - `QSTASH_TOKEN` (+ signing keys from Upstash QStash dashboard)
 

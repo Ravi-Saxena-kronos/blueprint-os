@@ -64,8 +64,10 @@ def _env_ok() -> list[str]:
     missing = []
     if not os.environ.get("DATABASE_URL", "").strip():
         missing.append("DATABASE_URL")
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
-        missing.append("OPENAI_API_KEY")
+    from llm import llm_configured
+
+    if not llm_configured():
+        missing.append("LLM_API_KEY (GROQ_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY)")
     if not os.environ.get("INTERNAL_JOB_SECRET", "").strip():
         missing.append("INTERNAL_JOB_SECRET")
     if not os.environ.get("QSTASH_TOKEN", "").strip():
@@ -76,11 +78,20 @@ def _env_ok() -> list[str]:
 @app.get("/health")
 def health():
     missing = _env_ok()
+    from llm import active_provider
+
+    prov = None
+    try:
+        prov = active_provider()
+    except Exception:
+        prov = os.environ.get("LLM_PROVIDER") or None
+
     return {
         "ok": not missing,
         "missing_env": missing,
         "deploy": os.environ.get("DEPLOY_TARGET", "?"),
         "assemblyai": bool(os.environ.get("ASSEMBLYAI_API_KEY", "").strip()),
+        "llm_provider": prov,
     }
 
 
@@ -188,8 +199,12 @@ async def intake_assist(request: Request):
     voice_mode = bool(body.get("voice_mode"))
     from intake_assist import assist_from_message
 
+    from llm import LLMUserError
+
     try:
         result = assist_from_message(message, current, voice_mode=voice_mode)
+    except LLMUserError as exc:
+        raise HTTPException(402, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(503, str(exc)) from exc
     return result
@@ -205,10 +220,15 @@ async def intake_voice_start(request: Request):
     message = (body.get("message") or "").strip()
     if not message:
         raise HTTPException(400, "message required")
-    refused, reason = is_refused(message)
+    from translate import translate_to_english
+
+    message_en, src_lang = translate_to_english(message)
+    refused, reason = is_refused(message_en)
     if refused:
         raise HTTPException(422, reason)
-    brief = brief_from_voice_question(message)
+    brief = brief_from_voice_question(
+        message_en, original=message, source_lang=src_lang, already_english=True
+    )
     anon_email = f"voice-{uuid.uuid4().hex[:10]}@noreply.blueprint-os.local"
     try:
         redirect = _start_job_after_intake(
@@ -220,7 +240,10 @@ async def intake_voice_start(request: Request):
             input_ref="voice_express",
         )
         loc = redirect.headers.get("location") or "/"
-        return JSONResponse({"redirect": loc, "message": "Blueprint started. Download DOCX when status is delivered."})
+        note = "Blueprint started. Download DOCX when status is delivered."
+        if src_lang and src_lang not in ("en", None) and message_en != message:
+            note = f"Translated your question to English. {note}"
+        return JSONResponse({"redirect": loc, "message": note, "english_question": message_en})
     except Exception as exc:
         raise HTTPException(500, str(exc)) from exc
 
@@ -238,6 +261,10 @@ async def intake_submit(
     geography: str = Form(""),
     budget_band: str = Form(""),
 ):
+    from translate import translate_to_english
+
+    problem, _ = translate_to_english(problem)
+    goal, _ = translate_to_english(goal)
     refused, reason = is_refused(problem + " " + goal)
     if refused:
         return JSONResponse({"error": "We cannot take this request.", "detail": reason}, status_code=422)
@@ -329,11 +356,18 @@ async def voice_transcribe(request: Request):
     data = await upload.read()
     from assemblyai_stt import transcribe_audio
 
+    from translate import translate_to_english
+
     try:
         text = transcribe_audio(data)
+        text_en, src_lang = translate_to_english(text)
     except Exception as exc:
         raise HTTPException(503, str(exc)) from exc
-    return {"text": text}
+    return {
+        "text": text_en,
+        "original_text": text,
+        "language": src_lang,
+    }
 
 
 @app.post("/voice/turn")

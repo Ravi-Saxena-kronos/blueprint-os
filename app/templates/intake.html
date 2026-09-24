@@ -8,6 +8,7 @@
   <section class="intake-assist-panel voice-first" id="assist">
     <h2>Voice (no email)</h2>
     <div class="deliverable-card">
+      <p class="note">Speak or type in any language — we translate to English before building your blueprint.</p>
       <p id="agent-text">{{ welcome }}</p>
       <div class="voice-controls">
         <button type="button" class="btn btn-lg" id="record-btn">Hold to speak</button>
@@ -58,7 +59,12 @@ function speak(text) {
 
 async function readError(r) {
   const t = await r.text();
-  return t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 280);
+  try {
+    const j = JSON.parse(t);
+    if (typeof j.detail === 'string') return j.detail;
+    if (j.detail) return JSON.stringify(j.detail).slice(0, 320);
+  } catch (_) {}
+  return t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 320);
 }
 
 function showOutput(data) {
@@ -121,10 +127,14 @@ async function startRec() {
       fd.append('audio', blob, 'clip.webm');
       const tr = await fetch('/voice/transcribe', { method: 'POST', body: fd });
       if (!tr.ok) throw new Error(await readError(tr));
-      const { text } = await tr.json();
-      if (!text) { statusEl.textContent = 'No speech detected.'; return; }
-      askBox.value = text;
-      statusEl.textContent = 'Got it. Tap Get blueprint DOCX.';
+      const data = await tr.json();
+      if (!data.text) { statusEl.textContent = 'No speech detected.'; return; }
+      askBox.value = data.text;
+      if (data.original_text && data.original_text !== data.text) {
+        statusEl.textContent = 'Translated to English. Tap Get blueprint DOCX.';
+      } else {
+        statusEl.textContent = 'Got it. Tap Get blueprint DOCX.';
+      }
       speak('Got it. Tap get blueprint DOCX when ready.');
     } catch (e) { statusEl.textContent = e.message; }
   };
