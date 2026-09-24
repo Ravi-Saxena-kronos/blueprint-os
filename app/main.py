@@ -185,23 +185,54 @@ async def intake_assist(request: Request):
     if not message:
         raise HTTPException(400, "message required")
     current = body.get("current_form") or {}
+    voice_mode = bool(body.get("voice_mode"))
     from intake_assist import assist_from_message
 
     try:
-        result = assist_from_message(message, current)
+        result = assist_from_message(message, current, voice_mode=voice_mode)
     except Exception as exc:
         raise HTTPException(503, str(exc)) from exc
     return result
 
 
+@app.post("/intake/voice-start")
+async def intake_voice_start(request: Request):
+    import uuid
+
+    from intake_assist import brief_from_voice_question
+
+    body = await request.json()
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "message required")
+    refused, reason = is_refused(message)
+    if refused:
+        raise HTTPException(422, reason)
+    brief = brief_from_voice_question(message)
+    anon_email = f"voice-{uuid.uuid4().hex[:10]}@noreply.blueprint-os.local"
+    try:
+        redirect = _start_job_after_intake(
+            tier="express",
+            email=anon_email,
+            company="",
+            industry="",
+            brief=brief,
+            input_ref="voice_express",
+        )
+        loc = redirect.headers.get("location") or "/"
+        return JSONResponse({"redirect": loc, "message": "Blueprint started. Download DOCX when status is delivered."})
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
 @app.post("/intake")
 async def intake_submit(
-    email: str = Form(...),
+    email: str = Form(""),
     company: str = Form(""),
     industry: str = Form(""),
     tier: str = Form("standard"),
-    problem: str = Form(...),
-    goal: str = Form(...),
+    problem: str = Form(""),
+    goal: str = Form(""),
     constraints: str = Form(""),
     timeline: str = Form(""),
     geography: str = Form(""),
@@ -212,6 +243,13 @@ async def intake_submit(
         return JSONResponse({"error": "We cannot take this request.", "detail": reason}, status_code=422)
     if tier not in TIERS:
         return JSONResponse({"error": "Invalid tier."}, status_code=422)
+    if not email.strip() or not problem.strip() or not goal.strip():
+        return HTMLResponse(
+            "<h1>Missing fields</h1><p>Form submit needs email, problem, and goal. "
+            "For voice-only, use <strong>Get blueprint DOCX</strong>.</p>"
+            "<p><a href='/intake'>Back</a></p>",
+            status_code=400,
+        )
     if not FREE_ACCESS_MODE and not STRIPE_PRICES.get(tier):
         return JSONResponse({"error": "Pricing not configured for this tier. Contact support."}, status_code=503)
 

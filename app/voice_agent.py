@@ -76,5 +76,7 @@ def session_to_intake(session: dict[str, Any]) -> Optional[dict[str, str]]:
 
 
 def welcome_message() -> str:
-    field, prompt = STEPS[0]
-    return f"Hi, I'm your blueprint intake assistant. {prompt}"
+    return (
+        "Hi. Hold to speak your question — no email needed. "
+        "We will build a blueprint and you can download DOCX on the next screen."
+    )

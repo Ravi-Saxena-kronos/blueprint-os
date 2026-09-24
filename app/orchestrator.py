@@ -106,6 +106,9 @@ def run_research_and_draft(job_id: str) -> None:
             status="review",
         )
         audit(job_id, actor="orchestrator", step="human_review", approval="pending")
+        if (job.get("brief") or {}).get("voice_express"):
+            run_deliver(job_id)
+            audit(job_id, actor="orchestrator", step="voice_express", approval="auto_deliver")
     except Exception as e:
         audit(job_id, actor="orchestrator", step="error", meta={"error": str(e)[:500]})
         update_job(job_id, status="error")
