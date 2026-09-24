@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone
 
-from db import audit, get_job, update_job
+from db import audit, get_job, orchestrator_started, update_job
 from llm import LLMUserError, json_call, spend_ok
 from schema import Blueprint
 
@@ -67,6 +67,13 @@ def run_research_and_draft(job_id: str) -> None:
     job = get_job(job_id)
     if not job:
         return
+    if job.get("status") in ("researching", "review", "delivered", "approved", "error", "blocked_budget"):
+        return
+    if job.get("status") == "processing" and orchestrator_started(job_id):
+        return
+    if job.get("status") in ("paid", "queued"):
+        update_job(job_id, status="processing")
+
     brief = job.get("brief") or {}
     total_cost = job.get("model_cost_cents") or 0
 

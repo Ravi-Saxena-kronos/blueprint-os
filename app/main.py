@@ -18,9 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
-from db import audit, get_job, list_all_jobs, list_review_jobs, new_job, update_job
+from db import audit, get_job, last_enqueue_error, list_all_jobs, list_review_jobs, new_job, update_job
 from internal_auth import verify_internal_request
 from job_queue import enqueue
+from job_runner import ensure_job_running, kick_enqueue
 from refusal import is_refused
 from render import OUTPUT_DIR, docx_bytes
 from voice_agent import new_session, process_turn, session_to_intake, welcome_message
@@ -152,10 +153,7 @@ def _start_job_after_intake(
     if FREE_ACCESS_MODE:
         update_job(job_id, stripe_payment_status="waived", status="paid")
         audit(job_id, actor="system", step="payment", approval="free_access")
-        try:
-            enqueue("run_research_and_draft", job_id)
-        except Exception as exc:
-            audit(job_id, actor="system", step="enqueue", meta={"error": str(exc)[:300]})
+        kick_enqueue(job_id)
         return RedirectResponse(f"/job/{job_id}?started=1", status_code=303)
 
     session = stripe.checkout.Session.create(
@@ -424,7 +422,32 @@ def job_status(request: Request, job_id: str):
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    return _tpl(request, "status.html", {"job": job})
+    if job["status"] in ("paid", "queued"):
+        try:
+            ensure_job_running(job_id, allow_inline=False)
+        except Exception:
+            pass
+        job = get_job(job_id) or job
+    enqueue_err = last_enqueue_error(job_id) if job["status"] in ("paid", "queued", "processing", "error") else None
+    return _tpl(request, "status.html", {"job": job, "enqueue_err": enqueue_err})
+
+
+@app.get("/job/{job_id}/poll")
+def job_poll(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job["status"] in ("paid", "queued", "processing"):
+        try:
+            ensure_job_running(job_id, allow_inline=True)
+        except Exception:
+            pass
+        job = get_job(job_id) or job
+    return {
+        "status": job["status"],
+        "delivered": job["status"] == "delivered",
+        "error": (job.get("brief") or {}).get("last_error") or last_enqueue_error(job_id),
+    }
 
 
 @app.get("/download/{job_id}/docx")

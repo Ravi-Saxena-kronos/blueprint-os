@@ -27,14 +27,64 @@
   <p>Something went wrong. Note your reference <code>{{ job.id[:8] }}</code> if you contact support.</p>
   {% endif %}
 </section>
+{% elif job.status in ['processing', 'researching'] %}
+<section class="deliverable-card pending">
+  <h2>Building your blueprint</h2>
+  <p id="status-hint">AI pipeline running ({{ job.status }})… 2–5 minutes typical.</p>
+  <p class="note">Please keep this tab open.</p>
+</section>
 {% else %}
 <section class="deliverable-card pending">
   <h2>Working on your blueprint</h2>
-  <p>This page updates as we progress. Keep this tab open or refresh every minute.</p>
-  <p class="note">Typical flow: researching → review → delivered (download appears above).</p>
+  <p id="status-hint">Starting background worker…</p>
+  {% if enqueue_err %}
+  <p class="note">Worker note: {{ enqueue_err }}</p>
+  {% endif %}
+  <p class="note">Flow: paid → researching → delivered (download appears above).</p>
 </section>
 <script>
-setTimeout(function(){ location.reload(); }, 45000);
+(function(){
+  const jobId = {{ job.id|tojson }};
+  const hint = document.getElementById('status-hint');
+  async function tick(){
+    try {
+      const r = await fetch('/job/' + jobId + '/poll');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.status === 'processing' || d.status === 'researching') {
+        hint.textContent = 'Blueprint in progress (' + d.status + ')…';
+      } else if (d.status === 'delivered') {
+        location.reload();
+        return;
+      } else if (d.status === 'error') {
+        hint.textContent = d.error || 'Something went wrong.';
+        location.reload();
+        return;
+      } else {
+        hint.textContent = 'Status: ' + d.status + ' — still working…';
+      }
+    } catch (_) {}
+    setTimeout(tick, 12000);
+  }
+  setTimeout(tick, 3000);
+})();
+</script>
+{% endif %}
+{% if job.status in ['processing', 'researching'] %}
+<script>
+(function(){
+  const jobId = {{ job.id|tojson }};
+  async function tick(){
+    try {
+      const r = await fetch('/job/' + jobId + '/poll');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.delivered || d.status === 'error') location.reload();
+    } catch (_) {}
+    setTimeout(tick, 12000);
+  }
+  setTimeout(tick, 12000);
+})();
 </script>
 {% endif %}
 {% endblock %}
