@@ -19,6 +19,30 @@ def enqueue(task: TaskName, job_id: str) -> None:
     _enqueue_rq(task, job_id)
 
 
+def enqueue_or_run(task: TaskName, job_id: str) -> None:
+    """QStash when available; otherwise run orchestrator in-process (QSTASH_DISABLED=1)."""
+    if _is_vercel() and _qstash_disabled():
+        import orchestrator
+
+        if task == "run_research_and_draft":
+            orchestrator.run_research_and_draft(job_id)
+        else:
+            orchestrator.run_deliver(job_id)
+        return
+    try:
+        enqueue(task, job_id)
+    except Exception:
+        if _is_vercel():
+            import orchestrator
+
+            if task == "run_research_and_draft":
+                orchestrator.run_research_and_draft(job_id)
+            else:
+                orchestrator.run_deliver(job_id)
+            return
+        raise
+
+
 def _enqueue_rq(task: TaskName, job_id: str) -> None:
     import redis
     from rq import Queue

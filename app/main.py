@@ -29,7 +29,7 @@ from db import (
     update_job,
 )
 from internal_auth import verify_internal_request
-from job_queue import enqueue
+from job_queue import enqueue, enqueue_or_run
 from job_runner import ensure_job_running, kick_enqueue
 from refusal import is_refused
 from render import OUTPUT_DIR, docx_bytes
@@ -326,7 +326,7 @@ async def stripe_webhook(request: Request):
         if job_id:
             update_job(job_id, stripe_payment_status="paid", status="paid")
             audit(job_id, actor="stripe", step="payment", output_ref=s["id"], approval="paid")
-            enqueue("run_research_and_draft", job_id)
+            enqueue_or_run("run_research_and_draft", job_id)
     return {"ok": True}
 
 
@@ -534,7 +534,7 @@ def review_approve(job_id: str, notes: str = Form(""), reviewer: Optional[str] =
         raise HTTPException(404)
     audit(job_id, actor="reviewer", step="human_review", approval="approved", meta={"notes": notes[:500]})
     update_job(job_id, reviewer_id="reviewer", review_notes=notes, status="approved")
-    enqueue("run_deliver", job_id)
+    enqueue_or_run("run_deliver", job_id)
     return RedirectResponse(f"/review/{job_id}", status_code=303)
 
 
