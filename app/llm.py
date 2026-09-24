@@ -88,9 +88,12 @@ def _resolve_provider() -> str:
 
 
 def _model_for(provider: str) -> str:
-    override = os.environ.get("LLM_MODEL", "").strip() or os.environ.get("OPENAI_MODEL", "").strip()
-    if override:
-        return override
+    """LLM_MODEL applies to all providers; OPENAI_MODEL only when LLM_PROVIDER=openai."""
+    custom = os.environ.get("LLM_MODEL", "").strip()
+    if custom:
+        return custom
+    if provider == "openai":
+        return os.environ.get("OPENAI_MODEL", "").strip() or str(_PROVIDERS["openai"]["default_model"])
     return str(_PROVIDERS[provider]["default_model"])
 
 
