@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block body %}
+{% if free_access %}<p class="status-pill status-delivered">Free access — beta</p>{% endif %}
+<h1>Decision-grade plans, not generic chat.</h1>
+<p>Every paid blueprint includes problem framing, assumptions, options,
+recommendation, action plan, risks, evidence pack, and next steps.</p>
+
+<h2>Pricing</h2>
+<table>
+  <tr><th>Tier</th><th>Typical problem</th><th>SLA</th><th>Price</th><th></th></tr>
+  {% for k, t in tiers.items() %}
+  <tr>
+    <td>{{ t.name }}</td>
+    <td>
+      {% if k == 'express' %}Narrow, factual
+      {% elif k == 'standard' %}Full slice (GTM / ops / product)
+      {% else %}Multi-stakeholder, research-heavy{% endif %}
+    </td>
+    <td>{{ t.sla }}</td>
+    <td>{{ t.price }}</td>
+    <td><a class="btn" href="/intake?tier={{ k }}">Start</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

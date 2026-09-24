@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Review {{ job.id[:8] }}</h1>
+<p>Status: {{ job.status }} · Tier: {{ job.tier }}</p>
+
+<h2>Brief</h2>
+<pre>{{ job.brief | tojson(indent=2) }}</pre>
+
+<h2>Classification</h2>
+<pre>{{ job.classification | tojson(indent=2) }}</pre>
+
+<h2>Verifier report</h2>
+<pre>{{ job.verifier_report | tojson(indent=2) }}</pre>
+
+<h2>Blueprint (JSON)</h2>
+<pre style="max-height:520px;overflow:auto">{{ job.blueprint | tojson(indent=2) }}</pre>
+
+<form method="post" action="/review/{{ job.id }}/approve">
+  <label>Notes <textarea name="notes"></textarea></label>
+  <button class="btn" type="submit">Approve &amp; deliver</button>
+</form>
+<form method="post" action="/review/{{ job.id }}/reject">
+  <label>Return notes <textarea name="notes"></textarea></label>
+  <button class="btn warn" type="submit">Return to drafting</button>
+</form>
+{% endblock %}

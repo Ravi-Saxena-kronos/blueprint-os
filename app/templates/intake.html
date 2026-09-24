@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Start a blueprint</h1>
+<p>Tier: <strong>{{ tiers[tier].name }}</strong> ({{ tiers[tier].price }}, SLA {{ tiers[tier].sla }})</p>
+<form method="post" action="/intake">
+  <input type="hidden" name="tier" value="{{ tier }}" />
+  <label>Email <input type="email" name="email" required /></label>
+  <label>Company <input type="text" name="company" /></label>
+  <label>Industry <input type="text" name="industry" /></label>
+  <label>Problem (what is wrong today?) <textarea name="problem" required></textarea></label>
+  <label>Goal (what outcome counts as done?) <textarea name="goal" required></textarea></label>
+  <label>Constraints <textarea name="constraints"></textarea></label>
+  <label>Timeline <input type="text" name="timeline" /></label>
+  <label>Geography <input type="text" name="geography" /></label>
+  <label>Budget band <input type="text" name="budget_band" /></label>
+  <button class="btn" type="submit">{% if free_access %}Start blueprint (free){% else %}Pay &amp; start{% endif %}</button>
+</form>
+{% if free_access %}<p class="note">Free access is enabled for this environment. No card required.</p>{% endif %}
+<p class="note">We do not take medical, individualized legal, or individualized tax requests.</p>
+{% endblock %}

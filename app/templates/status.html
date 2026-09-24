@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.id[:8] }}{% endblock %}
+{% block body %}
+<h1>Your blueprint</h1>
+<p class="meta">Reference <code>{{ job.id[:8] }}</code> · Tier {{ job.tier }} · SLA {{ job.sla_hours }}h</p>
+
+<div class="status-pill status-{{ job.status }}">{{ job.status }}</div>
+
+{% if job.status == 'delivered' %}
+<section class="deliverable-card" aria-label="Download deliverable">
+  <h2>Your plan is ready</h2>
+  <p>Polished Word document: problem framing, options, recommendation, action plan, risks, and evidence pack.</p>
+  <a class="btn btn-lg" href="/download/{{ job.id }}/docx">Download blueprint (.docx)</a>
+  <p class="note">Opens in Microsoft Word, Google Docs, or LibreOffice. Bookmark this page to download again.</p>
+</section>
+{% elif job.status in ['review','approved'] %}
+<section class="deliverable-card pending">
+  <h2>Final polish</h2>
+  <p>A reviewer is checking your blueprint. When status shows <strong>delivered</strong>, your download button will appear here.</p>
+</section>
+{% elif job.status == 'error' %}
+<section class="deliverable-card error">
+  <p>Something went wrong. Note your reference <code>{{ job.id[:8] }}</code> if you contact support.</p>
+</section>
+{% else %}
+<section class="deliverable-card pending">
+  <h2>Working on your blueprint</h2>
+  <p>This page updates as we progress. Keep this tab open or refresh every minute.</p>
+  <p class="note">Typical flow: researching → review → delivered (download appears above).</p>
+</section>
+<script>
+setTimeout(function(){ location.reload(); }, 45000);
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,32 @@
+* { box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; margin: 0; color: #1a1a1a; }
+header { display:flex; justify-content:space-between; padding:14px 24px;
+         border-bottom:1px solid #eee; background:#fafafa; }
+header .brand { font-weight:700; text-decoration:none; color:#111; }
+header nav a { margin-left:16px; text-decoration:none; color:#444; }
+main { max-width: 900px; margin: 24px auto; padding: 0 20px 60px; }
+footer { border-top:1px solid #eee; padding:16px 24px; color:#777; font-size:13px; }
+h1 { margin-top: 0; }
+table { width:100%; border-collapse: collapse; }
+th, td { text-align:left; padding:8px 6px; border-bottom:1px solid #eee; }
+label { display:block; margin: 10px 0; font-size:14px; }
+input, textarea { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px;
+                  font-family:inherit; font-size:14px; }
+textarea { min-height: 90px; }
+.btn { display:inline-block; background:#111; color:#fff; padding:9px 14px;
+       border-radius:6px; text-decoration:none; border:0; cursor:pointer; }
+.btn.warn { background:#a33; }
+pre { background:#f6f6f6; padding:12px; border-radius:6px; overflow:auto; }
+.note { color:#777; font-size:13px; }
+.meta { color:#666; font-size:14px; }
+.status-pill { display:inline-block; padding:4px 12px; border-radius:999px; font-size:13px;
+  font-weight:600; text-transform:capitalize; margin:8px 0 16px; background:#eee; }
+.status-delivered { background:#d4edda; color:#155724; }
+.status-review, .status-approved { background:#fff3cd; color:#856404; }
+.status-error { background:#f8d7da; color:#721c24; }
+.status-researching, .status-paid { background:#d1ecf1; color:#0c5460; }
+.deliverable-card { border:1px solid #e0e0e0; border-radius:10px; padding:20px 22px;
+  background:#fafafa; margin-top:8px; }
+.deliverable-card h2 { margin-top:0; font-size:1.15rem; }
+.deliverable-card.pending { background:#fff; }
+.btn-lg { padding:12px 20px; font-size:15px; margin-top:8px; }

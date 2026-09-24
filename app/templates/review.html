@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Review inbox</h1>
+{% if not jobs %}<p>No jobs waiting.</p>{% endif %}
+<ul>
+{% for j in jobs %}
+  <li><a href="/review/{{ j.id }}">{{ j.id[:8] }} — {{ j.tier }} — {{ j.email }}</a></li>
+{% endfor %}
+</ul>
+{% endblock %}

@@ -1,0 +1,199 @@
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8"/>
+<title>Blueprint OS — GitHub &amp; Vercel Deployment Workflow</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+<style>
+body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.35; max-width: 7.5in; margin: 1in; }
+h1 { font-size: 20pt; color: #111; }
+h2 { font-size: 14pt; color: #222; margin-top: 18pt; }
+h3 { font-size: 12pt; color: #333; }
+table { border-collapse: collapse; width: 100%; margin: 10pt 0; }
+th, td { border: 1px solid #ccc; padding: 6pt 8pt; text-align: left; vertical-align: top; }
+th { background: #f3f3f3; }
+code, pre { font-family: Consolas, monospace; font-size: 10pt; background: #f6f6f6; }
+pre { padding: 8pt; white-space: pre-wrap; }
+.note { color: #555; font-size: 10pt; }
+</style>
+</head>
+<body>
+
+<h1>Blueprint OS — GitHub &amp; Vercel Deployment Workflow</h1>
+<p><strong>Document version:</strong> 1.0 &nbsp;|&nbsp; <strong>Product:</strong> Blueprint OS MVP &nbsp;|&nbsp; <strong>Repo root:</strong> PROJECT-03</p>
+<p class="note">Open this file in Microsoft Word or LibreOffice Writer. Use <strong>File → Save As → Word Document (.docx)</strong> if you need a .docx copy.</p>
+
+<h2>Overview</h2>
+<p>This guide walks you from an empty GitHub repository to a live Blueprint OS deployment on Vercel. The app uses:</p>
+<ul>
+<li><strong>Vercel</strong> — hosts FastAPI via <code>api/index.py</code></li>
+<li><strong>Neon or Supabase</strong> — Postgres (run <code>scripts/init_db.sql</code> once)</li>
+<li><strong>Upstash QStash</strong> — runs AI orchestrator jobs after Stripe payment (serverless-safe)</li>
+<li><strong>Stripe</strong> — Checkout + webhook</li>
+<li><strong>OpenAI</strong> — blueprint generation</li>
+</ul>
+
+<h2>Phase 1 — Prerequisites (accounts &amp; tools)</h2>
+<table>
+<tr><th>Item</th><th>Action</th></tr>
+<tr><td>GitHub account</td><td>Create at github.com</td></tr>
+<tr><td>Vercel account</td><td>Sign up at vercel.com (link GitHub)</td></tr>
+<tr><td>Neon or Supabase</td><td>Create a Postgres project (free tier OK for testing)</td></tr>
+<tr><td>Upstash</td><td>Create QStash; copy token and signing keys</td></tr>
+<tr><td>Stripe</td><td>Test mode keys + three Price IDs (Express, Standard, Premium)</td></tr>
+<tr><td>OpenAI</td><td>API key with billing enabled</td></tr>
+<tr><td>Local tools</td><td>Git, optional Vercel CLI (<code>npm i -g vercel</code>)</td></tr>
+</table>
+
+<h2>Phase 2 — Push PROJECT-03 to GitHub</h2>
+<h3>Step 2.1 Create an empty repository on GitHub</h3>
+<ol>
+<li>GitHub → <strong>New repository</strong></li>
+<li>Name example: <code>blueprint-os</code></li>
+<li>Do <strong>not</strong> add README/license if your local folder already has files</li>
+<li>Copy the repository URL (HTTPS or SSH)</li>
+</ol>
+
+<h3>Step 2.2 Initialize git locally (run on your machine)</h3>
+<pre>cd /path/to/PROJECT-03
+git init
+git add .
+git commit -m "Initial Blueprint OS MVP for Vercel"
+git branch -M main
+git remote add origin https://github.com/YOUR_USER/blueprint-os.git
+git push -u origin main</pre>
+<p class="note">Never commit <code>.env</code>. Only <code>.env.example</code> is in the repo.</p>
+
+<h2>Phase 3 — Database setup</h2>
+<h3>Step 3.1 Create Postgres</h3>
+<ol>
+<li>In Neon (or Supabase), create database <code>blueprint_os</code></li>
+<li>Copy the connection string → this becomes <code>DATABASE_URL</code></li>
+<li>Ensure SSL is enabled (<code>?sslmode=require</code> on Neon is typical)</li>
+</ol>
+
+<h3>Step 3.2 Run schema SQL</h3>
+<ol>
+<li>Open the SQL editor in Neon/Supabase</li>
+<li>Paste entire contents of <code>scripts/init_db.sql</code> from this repo</li>
+<li>Execute once</li>
+<li>Confirm tables <code>jobs</code> and <code>audit_events</code> exist</li>
+</ol>
+
+<h2>Phase 4 — Stripe configuration</h2>
+<ol>
+<li>Stripe Dashboard → Products → create three one-time prices (Express, Standard, Premium)</li>
+<li>Copy each <code>price_...</code> ID</li>
+<li>Developers → Webhooks → Add endpoint (you will set URL after first Vercel deploy):
+<ul>
+<li>URL: <code>https://YOUR-APP.vercel.app/webhook/stripe</code></li>
+<li>Event: <code>checkout.session.completed</code></li>
+</ul>
+</li>
+<li>Copy <code>whsec_...</code> signing secret</li>
+<li>Copy secret key <code>sk_test_...</code> (or live key when ready)</li>
+</ol>
+
+<h2>Phase 5 — Upstash QStash</h2>
+<ol>
+<li>Upstash Console → QStash → create token</li>
+<li>Copy <code>QSTASH_TOKEN</code>, <code>QSTASH_CURRENT_SIGNING_KEY</code>, <code>QSTASH_NEXT_SIGNING_KEY</code></li>
+<li>Generate a long random string for <code>INTERNAL_JOB_SECRET</code> (used when QStash calls your app)</li>
+</ol>
+<p>After payment, Stripe webhook enqueues work; QStash POSTs to:</p>
+<pre>https://YOUR-APP.vercel.app/internal/jobs/run_research_and_draft/{job_id}</pre>
+
+<h2>Phase 6 — Import project into Vercel</h2>
+<h3>Option A — Vercel Dashboard (recommended)</h3>
+<ol>
+<li>Vercel → <strong>Add New → Project</strong></li>
+<li>Import your GitHub repository</li>
+<li>Framework Preset: <strong>Other</strong> (not Next.js)</li>
+<li>Root Directory: <strong>.</strong> (repository root)</li>
+<li>Build settings: leave defaults; <code>vercel.json</code> defines Python install</li>
+<li>Do not deploy yet — add environment variables first</li>
+</ol>
+
+<h3>Option B — Vercel CLI</h3>
+<pre>cd PROJECT-03
+vercel login
+vercel link
+vercel env pull .env.local   # optional, for local reference
+vercel deploy --prod</pre>
+
+<h2>Phase 7 — Vercel environment variables</h2>
+<p>Vercel → Project → Settings → Environment Variables. Add for <strong>Production</strong> (and Preview if you test PRs):</p>
+<table>
+<tr><th>Variable</th><th>Example / notes</th></tr>
+<tr><td>DEPLOY_TARGET</td><td><code>vercel</code></td></tr>
+<tr><td>APP_URL</td><td><code>https://your-project.vercel.app</code> (update if you add custom domain)</td></tr>
+<tr><td>DATABASE_URL</td><td>Neon/Supabase connection string</td></tr>
+<tr><td>STRIPE_SECRET_KEY</td><td><code>sk_test_...</code></td></tr>
+<tr><td>STRIPE_WEBHOOK_SECRET</td><td><code>whsec_...</code></td></tr>
+<tr><td>STRIPE_PRICE_EXPRESS</td><td><code>price_...</code></td></tr>
+<tr><td>STRIPE_PRICE_STANDARD</td><td><code>price_...</code></td></tr>
+<tr><td>STRIPE_PRICE_PREMIUM</td><td><code>price_...</code></td></tr>
+<tr><td>OPENAI_API_KEY</td><td><code>sk-...</code></td></tr>
+<tr><td>OPENAI_MODEL</td><td><code>gpt-4o-mini</code> (optional)</td></tr>
+<tr><td>REVIEW_PASSWORD</td><td>Reviewer inbox password</td></tr>
+<tr><td>JWT_SECRET</td><td>Long random string</td></tr>
+<tr><td>INTERNAL_JOB_SECRET</td><td>Long random string (match QStash forward auth)</td></tr>
+<tr><td>QSTASH_TOKEN</td><td>From Upstash</td></tr>
+<tr><td>QSTASH_CURRENT_SIGNING_KEY</td><td>From Upstash</td></tr>
+<tr><td>QSTASH_NEXT_SIGNING_KEY</td><td>From Upstash</td></tr>
+<tr><td>MODEL_BUDGET_CEILING_CENTS</td><td><code>20000</code> (optional)</td></tr>
+<tr><td>BLOB_READ_WRITE_TOKEN</td><td>Optional Vercel Blob for stored DOCX</td></tr>
+</table>
+<p>Redeploy after changing env vars.</p>
+
+<h2>Phase 8 — First deploy &amp; smoke test</h2>
+<ol>
+<li>Deploy from Vercel (or push to <code>main</code> if Git integration is on)</li>
+<li>Open <code>APP_URL</code> — landing page should load</li>
+<li>Update Stripe webhook URL to production <code>APP_URL</code></li>
+<li>Go to <code>/review/login</code> — sign in with <code>REVIEW_PASSWORD</code></li>
+<li>Run a Stripe test checkout from <code>/intake</code> (use test card 4242…)</li>
+<li>Watch job status at <code>/job/{id}</code> → should move to <code>review</code></li>
+<li>Approve in <code>/review</code> → status <code>delivered</code> → download DOCX</li>
+</ol>
+
+<h2>Phase 9 — Custom domain (optional)</h2>
+<ol>
+<li>Vercel → Project → Domains → add your domain</li>
+<li>Update DNS per Vercel instructions</li>
+<li>Set <code>APP_URL</code> to <code>https://yourdomain.com</code></li>
+<li>Update Stripe webhook URL and Checkout redirect URLs if needed</li>
+</ol>
+
+<h2>Phase 10 — Ongoing workflow</h2>
+<table>
+<tr><th>Task</th><th>Workflow</th></tr>
+<tr><td>Code change</td><td>Commit → push <code>main</code> → Vercel auto-deploys</td></tr>
+<tr><td>Secret rotation</td><td>Update in Vercel env → redeploy</td></tr>
+<tr><td>Schema change</td><td>Run migration SQL on Neon manually (no auto-migrate in MVP)</td></tr>
+<tr><td>Logs</td><td>Vercel → Deployments → Functions → Logs (filter <code>api/index</code>)</td></tr>
+<tr><td>QStash failures</td><td>Upstash QStash dashboard → message logs</td></tr>
+</table>
+
+<h2>Troubleshooting</h2>
+<table>
+<tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+<tr><td>502 / function crash on startup</td><td>Missing <code>DATABASE_URL</code> or bad import path</td><td>Check env vars; confirm <code>api/index.py</code> exists</td></tr>
+<tr><td>Payment works, job stuck on <code>paid</code></td><td>QStash not configured</td><td>Set <code>QSTASH_TOKEN</code> and <code>APP_URL</code>; check QStash logs</td></tr>
+<tr><td>401 on internal jobs</td><td><code>INTERNAL_JOB_SECRET</code> mismatch</td><td>Align secret with QStash forward header</td></tr>
+<tr><td>Stripe webhook 400</td><td>Wrong <code>STRIPE_WEBHOOK_SECRET</code></td><td>Use secret for exact endpoint URL</td></tr>
+<tr><td>Checkout 503</td><td>Missing Stripe price IDs</td><td>Set all three <code>STRIPE_PRICE_*</code> vars</td></tr>
+</table>
+
+<h2>Security checklist before going live</h2>
+<ul>
+<li>Use Stripe live keys only when ready; separate webhook for live mode</li>
+<li>Strong <code>REVIEW_PASSWORD</code>, <code>JWT_SECRET</code>, <code>INTERNAL_JOB_SECRET</code></li>
+<li>Restrict Neon database user permissions if possible</li>
+<li>Enable Vercel deployment protection for preview environments if needed</li>
+</ul>
+
+<p class="note">End of document.</p>
+</body>
+</html>
