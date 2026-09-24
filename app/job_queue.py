@@ -43,8 +43,9 @@ def _enqueue_qstash(task: TaskName, job_id: str) -> None:
             "Content-Type": "application/json",
             "Upstash-Forward-Authorization": f"Bearer {secret}" if secret else "",
         }
+        base = os.environ.get("QSTASH_URL", "https://qstash.upstash.io").rstrip("/")
         r = httpx.post(
-            f"https://qstash.upstash.io/v2/publish/{target}",
+            f"{base}/v2/publish/{target}",
             headers=headers,
             content=b"{}",
             timeout=30.0,

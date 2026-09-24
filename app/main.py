@@ -1,7 +1,13 @@
 import hmac
 import os
+import sys
 from pathlib import Path
 from typing import Optional
+
+# Vercel loads this file as app.main; keep sibling imports working.
+_APP_ROOT = Path(__file__).resolve().parent
+if str(_APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_APP_ROOT))
 
 import stripe
 from dotenv import load_dotenv
@@ -39,8 +45,8 @@ _templates = APP_DIR / "templates"
 if _static.is_dir():
     app.mount("/static", StaticFiles(directory=str(_static)), name="static")
 if not _templates.is_dir():
-    raise RuntimeError(f"Missing templates directory: {_templates}")
-templates = Jinja2Templates(directory=str(_templates))
+    _templates = APP_DIR / "templates"
+templates = Jinja2Templates(directory=str(_templates)) if _templates.is_dir() else None
 templates.env.globals["free_access"] = FREE_ACCESS_MODE
 _signer = URLSafeTimedSerializer(SECRET_KEY)
 
@@ -70,16 +76,22 @@ def health():
     return {"ok": not missing, "missing_env": missing, "deploy": os.environ.get("DEPLOY_TARGET", "?")}
 
 
+def _tpl(request: Request, name: str, ctx: dict):
+    if templates is None:
+        return HTMLResponse("<h1>Blueprint OS</h1><p>Templates missing on server.</p>", status_code=500)
+    return templates.TemplateResponse(name, {"request": request, **ctx})
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "tiers": TIERS})
+    return _tpl(request, "index.html", {"tiers": TIERS})
 
 
 @app.get("/intake", response_class=HTMLResponse)
 def intake_form(request: Request, tier: str = "standard"):
     if tier not in TIERS:
         tier = "standard"
-    return templates.TemplateResponse("intake.html", {"request": request, "tier": tier, "tiers": TIERS})
+    return _tpl(request, "intake.html", {"tier": tier, "tiers": TIERS})
 
 
 @app.post("/intake")
@@ -176,7 +188,7 @@ def job_status(request: Request, job_id: str):
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    return templates.TemplateResponse("status.html", {"request": request, "job": job})
+    return _tpl(request, "status.html", {"job": job})
 
 
 @app.get("/download/{job_id}/docx")
@@ -217,7 +229,7 @@ def _require_reviewer(reviewer: Optional[str]):
 
 @app.get("/review/login", response_class=HTMLResponse)
 def review_login_page(request: Request):
-    return templates.TemplateResponse("review_login.html", {"request": request})
+    return _tpl(request, "review_login.html", {})
 
 
 @app.post("/review/login")
@@ -233,7 +245,7 @@ def review_login(password: str = Form(...)):
 @app.get("/review", response_class=HTMLResponse)
 def review_inbox(request: Request, reviewer: Optional[str] = Cookie(None)):
     _require_reviewer(reviewer)
-    return templates.TemplateResponse("review.html", {"request": request, "jobs": list_review_jobs()})
+    return _tpl(request, "review.html", {"jobs": list_review_jobs()})
 
 
 @app.get("/review/{job_id}", response_class=HTMLResponse)
@@ -242,7 +254,7 @@ def review_job_page(request: Request, job_id: str, reviewer: Optional[str] = Coo
     job = get_job(job_id)
     if not job:
         raise HTTPException(404)
-    return templates.TemplateResponse("review_job.html", {"request": request, "job": job})
+    return _tpl(request, "review_job.html", {"job": job})
 
 
 @app.post("/review/{job_id}/approve")
