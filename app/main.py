@@ -523,6 +523,11 @@ def review_job_page(request: Request, job_id: str, reviewer: Optional[str] = Coo
     job = get_job(job_id)
     if not job:
         raise HTTPException(404)
+    if job["status"] == "approved" and job.get("blueprint"):
+        import orchestrator
+
+        orchestrator.run_deliver(job_id)
+        job = get_job(job_id) or job
     return _tpl(request, "review_job.html", {"job": job})
 
 
@@ -532,9 +537,33 @@ def review_approve(job_id: str, notes: str = Form(""), reviewer: Optional[str] =
     job = get_job(job_id)
     if not job:
         raise HTTPException(404)
+    if not job.get("blueprint"):
+        raise HTTPException(400, "Job has no blueprint yet — wait until status is review.")
     audit(job_id, actor="reviewer", step="human_review", approval="approved", meta={"notes": notes[:500]})
     update_job(job_id, reviewer_id="reviewer", review_notes=notes, status="approved")
-    enqueue_or_run("run_deliver", job_id)
+    import orchestrator
+
+    try:
+        orchestrator.run_deliver(job_id)
+    except Exception as exc:
+        brief = job.get("brief") or {}
+        update_job(job_id, status="error", brief={**brief, "last_error": f"Deliver failed: {exc}"[:500]})
+        raise HTTPException(500, f"Deliver failed: {exc}") from exc
+    return RedirectResponse(f"/review/{job_id}", status_code=303)
+
+
+@app.post("/review/{job_id}/deliver")
+def review_deliver_now(job_id: str, reviewer: Optional[str] = Cookie(None)):
+    """Retry DOCX delivery (e.g. after QStash was disabled)."""
+    _require_reviewer(reviewer)
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404)
+    if not job.get("blueprint"):
+        raise HTTPException(400, "No blueprint on this job.")
+    import orchestrator
+
+    orchestrator.run_deliver(job_id)
     return RedirectResponse(f"/review/{job_id}", status_code=303)
 
 

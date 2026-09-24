@@ -25,7 +25,8 @@ RESEARCH_SYS = (
 
 PLAN_SYS = (
     "You are the blueprint planner. Using the brief, classification, and sources, "
-    "return STRICT JSON matching the blueprint contract. Fields: "
+    "return STRICT JSON matching the blueprint contract. Keep each bullet under 25 words. "
+    "Fields: "
     "problem_framing{goal,stakeholders[],success_criteria[]}, "
     "assumptions[{id,statement,testable,tied_to_evidence,status}], "
     "options[{name,pros[],cons[],cost_band}] (at least 2), "
@@ -147,7 +148,16 @@ def run_deliver(job_id: str) -> None:
     from render import maybe_upload_blob
 
     job = get_job(job_id)
-    if not job or not job.get("blueprint"):
+    if not job:
+        return
+    if not job.get("blueprint"):
+        brief = job.get("brief") or {}
+        update_job(
+            job_id,
+            status="error",
+            brief={**brief, "last_error": "No blueprint JSON saved — cannot build DOCX."},
+        )
+        audit(job_id, actor="orchestrator", step="deliver", meta={"error": "missing blueprint"})
         return
     blob_url = maybe_upload_blob(job)
     fields = {"status": "delivered", "delivered_at": datetime.now(timezone.utc)}

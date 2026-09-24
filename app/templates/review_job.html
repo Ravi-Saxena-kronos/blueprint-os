@@ -1,7 +1,16 @@
 {% extends "base.html" %}
 {% block body %}
 <h1>Review {{ job.id[:8] }}</h1>
-<p>Status: {{ job.status }} · Tier: {{ job.tier }}</p>
+<p>Status: <strong>{{ job.status }}</strong> · Tier: {{ job.tier }}</p>
+{% if job.status == 'delivered' %}
+<p class="note">Delivered — client can download at <a href="/job/{{ job.id }}">/job/{{ job.id[:8] }}</a>
+  or <a href="/download/{{ job.id }}/docx">DOCX direct link</a>.</p>
+{% elif job.status == 'approved' %}
+<p class="note">Approved but not delivered yet — use the button below or refresh this page.</p>
+<form method="post" action="/review/{{ job.id }}/deliver">
+  <button class="btn" type="submit">Run deliver now</button>
+</form>
+{% endif %}
 
 <h2>Brief</h2>
 <pre>{{ job.brief | tojson(indent=2) }}</pre>
@@ -15,10 +24,12 @@
 <h2>Blueprint (JSON)</h2>
 <pre style="max-height:520px;overflow:auto">{{ job.blueprint | tojson(indent=2) }}</pre>
 
+{% if job.status == 'review' %}
 <form method="post" action="/review/{{ job.id }}/approve">
   <label>Notes <textarea name="notes"></textarea></label>
   <button class="btn" type="submit">Approve &amp; deliver</button>
 </form>
+{% endif %}
 <form method="post" action="/review/{{ job.id }}/reject">
   <label>Return notes <textarea name="notes"></textarea></label>
   <button class="btn warn" type="submit">Return to drafting</button>
