@@ -3,10 +3,9 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
-from blueprint_normalize import normalize_blueprint_raw
+from blueprint_normalize import blueprint_to_validated, normalize_blueprint_raw
 from db import audit, get_job, orchestrator_started, update_job
 from llm import LLMUserError, json_call, spend_ok
-from schema import Blueprint
 
 CLASSIFY_SYS = (
     "You classify inbound business problems. Return STRICT JSON: "
@@ -109,13 +108,10 @@ def run_research_and_draft(job_id: str) -> None:
         audit(job_id, actor="verifier_agent", step="verify", output_ref="verifier_report", meta={"cost_cents": c4})
 
         try:
-            validated = Blueprint(**blueprint_raw).model_dump()
+            validated = blueprint_to_validated(blueprint_raw)
         except ValidationError as ve:
-            try:
-                validated = Blueprint(**normalize_blueprint_raw(blueprint_raw)).model_dump()
-            except ValidationError:
-                raise ve
             audit(job_id, actor="orchestrator", step="plan_normalize", meta={"validation": str(ve)[:300]})
+            raise
         update_job(
             job_id,
             blueprint=validated,

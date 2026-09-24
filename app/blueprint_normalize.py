@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -21,14 +22,42 @@ def _as_str(value: Any, default: str = "") -> str:
 
 
 def _as_int(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return default
     if isinstance(value, int):
         return value
-    if isinstance(value, str) and value.isdigit():
+    if isinstance(value, float):
         return int(value)
+    if isinstance(value, str):
+        s = value.strip()
+        if s.isdigit():
+            return int(s)
+        m = re.search(r"\d+", s)
+        if m:
+            return int(m.group())
     try:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_assumptions(items: Any, *, fallback: list[dict] | None = None) -> list[dict]:
+    out: list[dict] = []
+    for i, a in enumerate(_as_list(items)):
+        if not isinstance(a, dict):
+            continue
+        out.append(
+            {
+                "id": _as_int(a.get("id"), i + 1),
+                "statement": _as_str(a.get("statement"), "Assumption pending review"),
+                "testable": bool(a.get("testable", True)),
+                "tied_to_evidence": a.get("tied_to_evidence"),
+                "status": _as_str(a.get("status"), "unknown"),
+            }
+        )
+    if out:
+        return out
+    return fallback or [{"id": 1, "statement": "Client context as stated in the brief", "status": "unknown"}]
 
 
 def normalize_blueprint_raw(raw: dict | None) -> dict:
@@ -42,22 +71,7 @@ def normalize_blueprint_raw(raw: dict | None) -> dict:
         or ["Actionable recommendation documented"],
     }
 
-    assumptions: list[dict] = []
-    for i, a in enumerate(_as_list(d.get("assumptions"))):
-        if not isinstance(a, dict):
-            continue
-        assumptions.append(
-            {
-                "id": _as_int(a.get("id"), i + 1),
-                "statement": _as_str(a.get("statement"), "Assumption pending review"),
-                "testable": bool(a.get("testable", True)),
-                "tied_to_evidence": a.get("tied_to_evidence"),
-                "status": _as_str(a.get("status"), "unknown"),
-            }
-        )
-    if not assumptions:
-        assumptions = [{"id": 1, "statement": "Client context as stated in the brief", "status": "unknown"}]
-    d["assumptions"] = assumptions
+    d["assumptions"] = _normalize_assumptions(d.get("assumptions"))
 
     options: list[dict] = []
     for o in _as_list(d.get("options")):
@@ -161,7 +175,7 @@ def normalize_blueprint_raw(raw: dict | None) -> dict:
         )
     d["evidence_pack"] = {
         "sources": sources,
-        "assumption_table": ep.get("assumption_table") or [],
+        "assumption_table": _normalize_assumptions(ep.get("assumption_table"), fallback=d["assumptions"]),
         "confidence_per_claim": conf,
         "falsifiers": [_as_str(x) for x in _as_list(ep.get("falsifiers")) if _as_str(x)],
     }
@@ -172,3 +186,19 @@ def normalize_blueprint_raw(raw: dict | None) -> dict:
     ]
 
     return d
+
+
+def blueprint_to_validated(raw: dict | None) -> dict:
+    """Normalize and validate; fall back to coerced assumption_table if needed."""
+    from pydantic import ValidationError
+
+    from schema import Blueprint
+
+    normed = normalize_blueprint_raw(raw)
+    try:
+        return Blueprint(**normed).model_dump()
+    except ValidationError:
+        ep = dict(normed.get("evidence_pack") or {})
+        ep["assumption_table"] = normed.get("assumptions") or []
+        normed["evidence_pack"] = ep
+        return Blueprint(**normalize_blueprint_raw(normed)).model_dump()
