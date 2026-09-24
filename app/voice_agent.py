@@ -4,6 +4,8 @@ from typing import Any, Optional
 
 STEPS = [
     ("email", "What email should we use for updates and your blueprint link?"),
+    ("company", "What company is this for? Say skip if personal."),
+    ("industry", "What industry? Say skip if unsure."),
     ("problem", "In one or two sentences, what problem are you facing today?"),
     ("goal", "What outcome would count as done for you?"),
     ("constraints", "Any constraints we should know? Say skip if none."),
@@ -26,29 +28,30 @@ def _norm_skip(text: str) -> str:
     return t
 
 
-def process_turn(session: dict[str, Any], user_text: str) -> tuple[dict[str, Any], str, bool]:
-    """Returns (updated_session, agent_reply, ready_to_submit)."""
+def process_turn(session: dict[str, Any], user_text: str) -> tuple[dict[str, Any], str, bool, str | None, str]:
+    """Returns (session, reply, ready, filled_field, filled_value)."""
     text = (user_text or "").strip()
     if not text:
-        return session, "I didn't catch that. Please try again.", False
+        return session, "I didn't catch that. Please try again.", False, None, ""
 
     idx = int(session.get("step", 0))
     if idx >= len(STEPS):
-        return session, "Ready to submit. Tap Submit blueprint.", True
+        return session, "Ready to submit. Tap Submit blueprint.", True, None, ""
 
     field, _prompt = STEPS[idx]
     if field == "email" and "@" not in text:
-        return session, "Please say or type a valid email address.", False
+        return session, "Please say or type a valid email address.", False, None, ""
 
     session.setdefault("data", {})
-    session["data"][field] = _norm_skip(text) if field not in ("email", "problem", "goal") else text.strip()
+    value = _norm_skip(text) if field not in ("email", "problem", "goal") else text.strip()
+    session["data"][field] = value
     session["step"] = idx + 1
 
     if session["step"] >= len(STEPS):
-        return session, "Thanks. I have everything. Tap Submit blueprint to start your plan.", True
+        return session, "Thanks. I have everything. Submit the form when you're ready.", True, field, value
 
     _, next_prompt = STEPS[session["step"]]
-    return session, next_prompt, False
+    return session, next_prompt, False, field, value
 
 
 def session_to_intake(session: dict[str, Any]) -> Optional[dict[str, str]]:
@@ -61,8 +64,8 @@ def session_to_intake(session: dict[str, Any]) -> Optional[dict[str, str]]:
     return {
         "tier": session.get("tier") or "standard",
         "email": email,
-        "company": "",
-        "industry": "",
+        "company": d.get("company", ""),
+        "industry": d.get("industry", ""),
         "problem": problem,
         "goal": goal,
         "constraints": d.get("constraints", ""),

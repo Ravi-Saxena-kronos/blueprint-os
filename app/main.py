@@ -24,6 +24,7 @@ from job_queue import enqueue
 from refusal import is_refused
 from assemblyai_stt import transcribe_audio
 from render import OUTPUT_DIR, docx_bytes
+from intake_assist import assist_from_message
 from voice_agent import new_session, process_turn, session_to_intake, welcome_message
 
 load_dotenv()
@@ -149,10 +150,31 @@ def home(request: Request):
 
 
 @app.get("/intake", response_class=HTMLResponse)
-def intake_form(request: Request, tier: str = "standard"):
+def intake_form(request: Request, tier: str = "standard", voice_session: Optional[str] = Cookie(None)):
     if tier not in TIERS:
         tier = "standard"
-    return _tpl(request, "intake.html", {"tier": tier, "tiers": TIERS})
+    resp = _tpl(
+        request,
+        "intake.html",
+        {"tier": tier, "tiers": TIERS, "welcome": welcome_message()},
+    )
+    if not voice_session:
+        return _cookie_response(new_session(tier), resp)
+    return resp
+
+
+@app.post("/intake/assist")
+async def intake_assist(request: Request):
+    body = await request.json()
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "message required")
+    current = body.get("current_form") or {}
+    try:
+        result = assist_from_message(message, current)
+    except Exception as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return result
 
 
 @app.post("/intake")
@@ -238,12 +260,9 @@ async def internal_job(task: str, job_id: str, request: Request):
     return {"ok": True}
 
 
-@app.get("/voice", response_class=HTMLResponse)
-def voice_page(request: Request, voice_session: Optional[str] = Cookie(None)):
-    _ = voice_session
-    session = new_session()
-    resp = _tpl(request, "voice.html", {"welcome": welcome_message()})
-    return _cookie_response(session, resp)
+@app.get("/voice")
+def voice_page_redirect(tier: str = "standard"):
+    return RedirectResponse(f"/intake?tier={tier}#assist", status_code=302)
 
 
 @app.post("/voice/transcribe")
@@ -264,8 +283,14 @@ async def voice_transcribe(request: Request):
 async def voice_turn(request: Request, voice_session: Optional[str] = Cookie(None)):
     body = await request.json()
     session = _load_voice(voice_session)
-    session, reply, ready = process_turn(session, body.get("text", ""))
-    out = JSONResponse({"reply": reply, "ready": ready})
+    session, reply, ready, field, value = process_turn(session, body.get("text", ""))
+    out = JSONResponse({
+        "reply": reply,
+        "ready": ready,
+        "field": field,
+        "value": value,
+        "fields": session.get("data") or {},
+    })
     return _cookie_response(session, out)
 
 

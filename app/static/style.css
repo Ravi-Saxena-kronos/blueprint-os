@@ -31,3 +31,7 @@ pre { background:#f6f6f6; padding:12px; border-radius:6px; overflow:auto; }
 .deliverable-card.pending { background:#fff; }
 .btn-lg { padding:12px 20px; font-size:15px; margin-top:8px; }
 .voice-controls { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
+.intake-layout { display:grid; grid-template-columns: 1fr 1fr; gap:24px; align-items:start; }
+@media (max-width: 860px) { .intake-layout { grid-template-columns: 1fr; } }
+.intake-form-panel h2, .intake-assist-panel h2 { font-size:1.05rem; margin-top:0; }
+.assist-output { min-height:120px; font-size:12px; }

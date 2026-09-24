@@ -1,20 +1,170 @@
 {% extends "base.html" %}
+{% block title %}Start blueprint{% endblock %}
 {% block body %}
 <h1>Start a blueprint</h1>
 <p>Tier: <strong>{{ tiers[tier].name }}</strong> ({{ tiers[tier].price }}, SLA {{ tiers[tier].sla }})</p>
-<form method="post" action="/intake">
-  <input type="hidden" name="tier" value="{{ tier }}" />
-  <label>Email <input type="email" name="email" required /></label>
-  <label>Company <input type="text" name="company" /></label>
-  <label>Industry <input type="text" name="industry" /></label>
-  <label>Problem (what is wrong today?) <textarea name="problem" required></textarea></label>
-  <label>Goal (what outcome counts as done?) <textarea name="goal" required></textarea></label>
-  <label>Constraints <textarea name="constraints"></textarea></label>
-  <label>Timeline <input type="text" name="timeline" /></label>
-  <label>Geography <input type="text" name="geography" /></label>
-  <label>Budget band <input type="text" name="budget_band" /></label>
-  <button class="btn" type="submit">{% if free_access %}Start blueprint (free){% else %}Pay &amp; start{% endif %}</button>
-</form>
-{% if free_access %}<p class="note">Free access is enabled for this environment. No card required.</p>{% endif %}
+<p class="note">Use the <strong>form</strong>, <strong>voice</strong>, or <strong>ask in plain language</strong> — all three stay available.</p>
+
+<div class="intake-layout">
+  <section class="intake-form-panel">
+    <h2>Form</h2>
+    <form method="post" action="/intake" id="intake-form">
+      <input type="hidden" name="tier" value="{{ tier }}" />
+      <label>Email <input type="email" name="email" id="f-email" required /></label>
+      <label>Company <input type="text" name="company" id="f-company" /></label>
+      <label>Industry <input type="text" name="industry" id="f-industry" /></label>
+      <label>Problem <textarea name="problem" id="f-problem" required></textarea></label>
+      <label>Goal <textarea name="goal" id="f-goal" required></textarea></label>
+      <label>Constraints <textarea name="constraints" id="f-constraints"></textarea></label>
+      <label>Timeline <input type="text" name="timeline" id="f-timeline" /></label>
+      <label>Geography <input type="text" name="geography" id="f-geography" /></label>
+      <label>Budget band <input type="text" name="budget_band" id="f-budget_band" /></label>
+      <button class="btn" type="submit">{% if free_access %}Start blueprint (free){% else %}Pay &amp; start{% endif %}</button>
+    </form>
+  </section>
+
+  <section class="intake-assist-panel" id="assist">
+    <h2>Voice &amp; ask</h2>
+    <div class="deliverable-card">
+      <p id="agent-text">{{ welcome }}</p>
+      <div class="voice-controls">
+        <button type="button" class="btn" id="record-btn">Hold to speak</button>
+        <button type="button" class="btn" id="guided-btn">Guided voice step</button>
+      </div>
+      <label>Ask anything (auto-fills the form)
+        <textarea id="ask-box" rows="3" placeholder="Example: I'm at acme.com, SaaS in India. We lose deals after demo. I want 20% more wins in 90 days. Email me at founder@acme.com"></textarea>
+      </label>
+      <button type="button" class="btn" id="ask-btn">Analyze &amp; fill form</button>
+      <p class="note" id="status-line"></p>
+    </div>
+    <h3>Assistant output</h3>
+    <pre id="assist-output" class="assist-output">Waiting for your question…</pre>
+  </section>
+</div>
+
+{% if free_access %}<p class="note">Free access — no card required.</p>{% endif %}
 <p class="note">We do not take medical, individualized legal, or individualized tax requests.</p>
+
+<script>
+const FIELD_IDS = {
+  email: 'f-email', company: 'f-company', industry: 'f-industry',
+  problem: 'f-problem', goal: 'f-goal', constraints: 'f-constraints',
+  timeline: 'f-timeline', geography: 'f-geography', budget_band: 'f-budget_band'
+};
+
+function speak(text) {
+  if (!window.speechSynthesis || !text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+function readForm() {
+  const o = {};
+  for (const [k, id] of Object.entries(FIELD_IDS)) {
+    const el = document.getElementById(id);
+    o[k] = el ? el.value.trim() : '';
+  }
+  return o;
+}
+
+function applyFields(fields) {
+  if (!fields) return;
+  for (const [k, id] of Object.entries(FIELD_IDS)) {
+    if (fields[k] !== undefined && fields[k] !== null) {
+      const el = document.getElementById(id);
+      if (el && String(fields[k]).length) el.value = fields[k];
+    }
+  }
+}
+
+function showOutput(data) {
+  const pre = document.getElementById('assist-output');
+  pre.textContent = JSON.stringify(data, null, 2);
+}
+
+const agentEl = document.getElementById('agent-text');
+const statusEl = document.getElementById('status-line');
+
+async function postAssist(message) {
+  const r = await fetch('/intake/assist', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ message, current_form: readForm() }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+document.getElementById('ask-btn').addEventListener('click', async () => {
+  const msg = document.getElementById('ask-box').value.trim();
+  if (!msg) return;
+  statusEl.textContent = 'Analyzing…';
+  try {
+    const data = await postAssist(msg);
+    applyFields(data.fields);
+    agentEl.textContent = data.assistant_reply;
+    speak(data.assistant_reply);
+    showOutput(data);
+    statusEl.textContent = data.ready_to_submit ? 'Form ready — submit when you like.' : 'Review auto-filled fields.';
+    if (data.refused) statusEl.textContent = data.refusal_reason;
+  } catch (e) { statusEl.textContent = e.message; }
+});
+
+async function postTurn(text, mode) {
+  const r = await fetch('/voice/turn', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ text, mode }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+document.getElementById('guided-btn').addEventListener('click', async () => {
+  const t = document.getElementById('ask-box').value.trim() || 'start';
+  try {
+    const data = await postTurn(t, 'guided');
+    agentEl.textContent = data.reply;
+    speak(data.reply);
+    if (data.field) applyFields({ [data.field]: data.value });
+    if (data.fields) applyFields(data.fields);
+    showOutput(data);
+    statusEl.textContent = data.ready ? 'Guided intake complete — submit form.' : 'Continue guided steps.';
+  } catch (e) { statusEl.textContent = e.message; }
+});
+
+let mediaRecorder, chunks = [];
+const recordBtn = document.getElementById('record-btn');
+
+async function startRec() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  chunks = [];
+  mediaRecorder = new MediaRecorder(stream);
+  mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+  mediaRecorder.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    statusEl.textContent = 'Transcribing (AssemblyAI)…';
+    const blob = new Blob(chunks, { type: 'audio/webm' });
+    const fd = new FormData();
+    fd.append('audio', blob, 'clip.webm');
+    const tr = await fetch('/voice/transcribe', { method: 'POST', body: fd });
+    if (!tr.ok) throw new Error(await tr.text());
+    const { text } = await tr.json();
+    if (!text) { statusEl.textContent = 'No speech detected.'; return; }
+    document.getElementById('ask-box').value = text;
+    document.getElementById('ask-btn').click();
+  };
+  mediaRecorder.start();
+  statusEl.textContent = 'Listening…';
+}
+function stopRec() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+}
+recordBtn.addEventListener('mousedown', () => startRec().catch((e) => { statusEl.textContent = e.message; }));
+recordBtn.addEventListener('mouseup', stopRec);
+recordBtn.addEventListener('mouseleave', stopRec);
+
+speak({{ welcome|tojson }});
+</script>
 {% endblock %}
