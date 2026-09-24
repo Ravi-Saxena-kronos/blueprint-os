@@ -1,6 +1,9 @@
 import json
 from datetime import datetime, timezone
 
+from pydantic import ValidationError
+
+from blueprint_normalize import normalize_blueprint_raw
 from db import audit, get_job, orchestrator_started, update_job
 from llm import LLMUserError, json_call, spend_ok
 from schema import Blueprint
@@ -97,6 +100,7 @@ def run_research_and_draft(job_id: str) -> None:
         audit(job_id, actor="orchestrator", step="plan")
         blueprint_raw, c3 = step_plan(brief, cls, research)
         total_cost += c3
+        blueprint_raw = normalize_blueprint_raw(blueprint_raw)
         audit(job_id, actor="plan_agent", step="plan", output_ref="blueprint_draft", meta={"cost_cents": c3})
 
         audit(job_id, actor="orchestrator", step="verify")
@@ -104,7 +108,14 @@ def run_research_and_draft(job_id: str) -> None:
         total_cost += c4
         audit(job_id, actor="verifier_agent", step="verify", output_ref="verifier_report", meta={"cost_cents": c4})
 
-        validated = Blueprint(**blueprint_raw).model_dump()
+        try:
+            validated = Blueprint(**blueprint_raw).model_dump()
+        except ValidationError as ve:
+            try:
+                validated = Blueprint(**normalize_blueprint_raw(blueprint_raw)).model_dump()
+            except ValidationError:
+                raise ve
+            audit(job_id, actor="orchestrator", step="plan_normalize", meta={"validation": str(ve)[:300]})
         update_job(
             job_id,
             blueprint=validated,
@@ -114,17 +125,26 @@ def run_research_and_draft(job_id: str) -> None:
         )
         audit(job_id, actor="orchestrator", step="human_review", approval="pending")
         if (job.get("brief") or {}).get("voice_express"):
-            run_deliver(job_id)
-            audit(job_id, actor="orchestrator", step="voice_express", approval="auto_deliver")
+            try:
+                run_deliver(job_id)
+                audit(job_id, actor="orchestrator", step="voice_express", approval="auto_deliver")
+            except Exception as de:
+                msg = f"Deliver step failed: {de}"[:500]
+                audit(job_id, actor="orchestrator", step="error", meta={"error": msg})
+                brief_err = {**brief, "last_error": msg}
+                update_job(job_id, status="error", brief=brief_err)
     except LLMUserError as e:
-        msg = str(e)
-        audit(job_id, actor="orchestrator", step="error", meta={"error": msg[:500]})
-        brief_err = {**brief, "last_error": msg}
-        update_job(job_id, status="error", brief=brief_err)
+        _fail_job(job_id, brief, str(e))
+    except ValidationError as e:
+        _fail_job(job_id, brief, f"Blueprint format error: {e.errors()[0]['msg'][:200]}")
     except Exception as e:
-        audit(job_id, actor="orchestrator", step="error", meta={"error": str(e)[:500]})
-        update_job(job_id, status="error")
+        _fail_job(job_id, brief, str(e)[:500])
         raise
+
+
+def _fail_job(job_id: str, brief: dict, msg: str) -> None:
+    audit(job_id, actor="orchestrator", step="error", meta={"error": msg[:500]})
+    update_job(job_id, status="error", brief={**brief, "last_error": msg[:500]})
 
 
 def run_deliver(job_id: str) -> None:

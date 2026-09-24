@@ -18,7 +18,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
-from db import audit, get_job, last_enqueue_error, list_all_jobs, list_review_jobs, new_job, update_job
+from db import (
+    audit,
+    get_job,
+    last_enqueue_error,
+    last_orchestrator_error,
+    list_all_jobs,
+    list_review_jobs,
+    new_job,
+    update_job,
+)
 from internal_auth import verify_internal_request
 from job_queue import enqueue
 from job_runner import ensure_job_running, kick_enqueue
@@ -429,7 +438,8 @@ def job_status(request: Request, job_id: str):
             pass
         job = get_job(job_id) or job
     enqueue_err = last_enqueue_error(job_id) if job["status"] in ("paid", "queued", "processing", "error") else None
-    return _tpl(request, "status.html", {"job": job, "enqueue_err": enqueue_err})
+    display_error = (job.get("brief") or {}).get("last_error") or last_orchestrator_error(job_id)
+    return _tpl(request, "status.html", {"job": job, "enqueue_err": enqueue_err, "display_error": display_error})
 
 
 @app.get("/job/{job_id}/poll")

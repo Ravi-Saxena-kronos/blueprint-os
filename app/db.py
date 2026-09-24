@@ -119,6 +119,20 @@ def count_enqueue_attempts(job_id: str) -> int:
     return int((row or {}).get("n") or 0)
 
 
+def last_orchestrator_error(job_id: str) -> str | None:
+    with conn() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT meta FROM audit_events WHERE job_id=%s AND step='error' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (job_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    meta = row.get("meta") or {}
+    return meta.get("error")
+
+
 def last_enqueue_error(job_id: str) -> str | None:
     with conn() as c, c.cursor() as cur:
         cur.execute(

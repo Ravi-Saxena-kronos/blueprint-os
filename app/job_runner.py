@@ -48,12 +48,12 @@ def _run_inline(job_id: str) -> None:
     try:
         orchestrator.run_research_and_draft(job_id)
     except Exception as exc:
-        if get_job(job_id) and get_job(job_id)["status"] not in ("error", "delivered"):
-            update_job(
-                job_id,
-                status="error",
-                brief={**brief, "last_error": str(exc)[:500]},
-            )
+        msg = str(exc)[:500]
+        j = get_job(job_id)
+        if j and j["status"] != "delivered":
+            b = j.get("brief") or brief
+            if not (b.get("last_error")):
+                update_job(job_id, status="error", brief={**b, "last_error": msg})
         raise
 
 
