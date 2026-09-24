@@ -34,8 +34,13 @@ FREE_ACCESS_MODE = os.environ.get("FREE_ACCESS_MODE", "").lower() in ("1", "true
 stripe.api_key = STRIPE_SECRET
 APP_DIR = Path(__file__).resolve().parent
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
-templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
+_static = APP_DIR / "static"
+_templates = APP_DIR / "templates"
+if _static.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_static)), name="static")
+if not _templates.is_dir():
+    raise RuntimeError(f"Missing templates directory: {_templates}")
+templates = Jinja2Templates(directory=str(_templates))
 templates.env.globals["free_access"] = FREE_ACCESS_MODE
 _signer = URLSafeTimedSerializer(SECRET_KEY)
 
