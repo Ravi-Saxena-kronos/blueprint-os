@@ -24,7 +24,7 @@ _PROVIDERS: dict[str, dict[str, str | None]] = {
         "key_env": "GROQ_API_KEY",
         # Llama 3.3 IDs were removed from free/dev tier Aug 2026 — see Groq deprecations doc.
         "default_model": "openai/gpt-oss-20b",
-        "fallback_models": "openai/gpt-oss-120b,qwen/qwen3.6-27b,meta-llama/llama-4-scout-17b-16e-instruct",
+        "fallback_models": "openai/gpt-oss-120b,qwen/qwen3.8-27b,allam-2-7b",
         "signup": "https://console.groq.com/keys (free tier)",
     },
     "gemini": {
