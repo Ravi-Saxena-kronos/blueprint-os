@@ -22,8 +22,10 @@ _PROVIDERS: dict[str, dict[str, str | None]] = {
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
         "key_env": "GROQ_API_KEY",
-        "default_model": "llama-3.3-70b-versatile",
-        "signup": "https://console.groq.com/keys (free tier, open-weight Llama models)",
+        # Llama 3.3 IDs were removed from free/dev tier Aug 2026 — see Groq deprecations doc.
+        "default_model": "openai/gpt-oss-20b",
+        "fallback_models": "openai/gpt-oss-120b,qwen/qwen3.6-27b,meta-llama/llama-4-scout-17b-16e-instruct",
+        "signup": "https://console.groq.com/keys (free tier)",
     },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -47,6 +49,7 @@ _PROVIDERS: dict[str, dict[str, str | None]] = {
 
 _client: OpenAI | None = None
 _active_provider: str | None = None
+_resolved_model: str | None = None
 
 
 class LLMUserError(RuntimeError):
@@ -89,12 +92,33 @@ def _resolve_provider() -> str:
 
 def _model_for(provider: str) -> str:
     """LLM_MODEL applies to all providers; OPENAI_MODEL only when LLM_PROVIDER=openai."""
+    global _resolved_model
+    if _resolved_model:
+        return _resolved_model
     custom = os.environ.get("LLM_MODEL", "").strip()
     if custom:
         return custom
     if provider == "openai":
         return os.environ.get("OPENAI_MODEL", "").strip() or str(_PROVIDERS["openai"]["default_model"])
     return str(_PROVIDERS[provider]["default_model"])
+
+
+def _model_candidates(provider: str) -> list[str]:
+    primary = _model_for(provider)
+    out = [primary]
+    if os.environ.get("LLM_MODEL", "").strip():
+        return out
+    extra = (_PROVIDERS.get(provider) or {}).get("fallback_models") or ""
+    for mid in str(extra).split(","):
+        mid = mid.strip()
+        if mid and mid not in out:
+            out.append(mid)
+    return out
+
+
+def _remember_model(model: str) -> None:
+    global _resolved_model
+    _resolved_model = model
 
 
 def _ensure_client() -> tuple[OpenAI, str, str]:
@@ -155,11 +179,23 @@ def _wrap_err(exc: Exception, provider: str) -> LLMUserError:
         if exc.status_code == 401:
             env = _PROVIDERS.get(provider, {}).get("key_env", "API key")
             return LLMUserError(f"Invalid {env}. Check Vercel environment variables.")
+        if exc.status_code == 404 and "model" in str(exc).lower():
+            return LLMUserError(
+                f"{provider} model not found. Set LLM_MODEL to a current model ID from "
+                f"https://console.groq.com/docs/models (e.g. openai/gpt-oss-20b)."
+            )
     return LLMUserError(f"{provider} error: {str(exc)[:220]}")
 
 
+def _is_model_not_found(exc: Exception) -> bool:
+    if isinstance(exc, APIStatusError) and exc.status_code == 404:
+        return True
+    s = str(exc).lower()
+    return "model_not_found" in s or ("404" in s and "model" in s)
+
+
 def json_call(system: str, user: str, *, max_tokens: int = 3500) -> tuple[dict, int]:
-    client, provider, model = _ensure_client()
+    client, provider, _ = _ensure_client()
     system_full = system.strip() + "\n\nReturn one JSON object only. No markdown fences or commentary."
 
     messages = [
@@ -168,29 +204,33 @@ def json_call(system: str, user: str, *, max_tokens: int = 3500) -> tuple[dict, 
     ]
 
     last_exc: Exception | None = None
-    for use_json_mode in (True, False):
-        try:
-            kwargs: dict = {
-                "model": model,
-                "messages": messages,
-                "temperature": 0.2,
-                "max_tokens": max_tokens,
-            }
-            if use_json_mode:
-                kwargs["response_format"] = {"type": "json_object"}
-            r = client.chat.completions.create(**kwargs)
-            text = r.choices[0].message.content or "{}"
-            usage = r.usage
-            in_per, out_per = _COST.get(provider, (0.0, 0.0))
-            cost = (usage.prompt_tokens / 1000) * in_per + (usage.completion_tokens / 1000) * out_per
-            return _parse_json(text), int(round(cost))
-        except json.JSONDecodeError as exc:
-            raise LLMUserError("Model returned invalid JSON. Retry or switch LLM_MODEL.") from exc
-        except Exception as exc:
-            last_exc = exc
-            if use_json_mode:
-                continue
-            raise _wrap_err(exc, provider) from exc
+    for model in _model_candidates(provider):
+        for use_json_mode in (True, False):
+            try:
+                kwargs: dict = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.2,
+                    "max_tokens": max_tokens,
+                }
+                if use_json_mode:
+                    kwargs["response_format"] = {"type": "json_object"}
+                r = client.chat.completions.create(**kwargs)
+                text = r.choices[0].message.content or "{}"
+                usage = r.usage
+                in_per, out_per = _COST.get(provider, (0.0, 0.0))
+                cost = (usage.prompt_tokens / 1000) * in_per + (usage.completion_tokens / 1000) * out_per
+                _remember_model(model)
+                return _parse_json(text), int(round(cost))
+            except json.JSONDecodeError as exc:
+                raise LLMUserError("Model returned invalid JSON. Retry or switch LLM_MODEL.") from exc
+            except Exception as exc:
+                last_exc = exc
+                if _is_model_not_found(exc):
+                    break  # try next model candidate
+                if use_json_mode:
+                    continue
+                raise _wrap_err(exc, provider) from exc
 
     if last_exc:
         raise _wrap_err(last_exc, provider) from last_exc
