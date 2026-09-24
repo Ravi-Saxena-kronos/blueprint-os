@@ -3,12 +3,23 @@ import os
 
 from openai import OpenAI
 
-_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 _MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 CEILING = int(os.environ.get("MODEL_BUDGET_CEILING_CENTS", "20000"))
 
 IN_PER_1K = 0.015
 OUT_PER_1K = 0.060
+
+_client: OpenAI | None = None
+
+
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+        _client = OpenAI(api_key=key)
+    return _client
 
 
 def spend_ok(already_cents: int) -> bool:
@@ -16,7 +27,8 @@ def spend_ok(already_cents: int) -> bool:
 
 
 def json_call(system: str, user: str, *, max_tokens: int = 3500) -> tuple[dict, int]:
-    r = _client.chat.completions.create(
+    client = _get_client()
+    r = client.chat.completions.create(
         model=_MODEL,
         response_format={"type": "json_object"},
         messages=[

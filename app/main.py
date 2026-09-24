@@ -22,9 +22,7 @@ from db import audit, get_job, list_all_jobs, list_review_jobs, new_job, update_
 from internal_auth import verify_internal_request
 from job_queue import enqueue
 from refusal import is_refused
-from assemblyai_stt import transcribe_audio
 from render import OUTPUT_DIR, docx_bytes
-from intake_assist import assist_from_message
 from voice_agent import new_session, process_turn, session_to_intake, welcome_message
 
 load_dotenv()
@@ -78,7 +76,24 @@ def _env_ok() -> list[str]:
 @app.get("/health")
 def health():
     missing = _env_ok()
-    return {"ok": not missing, "missing_env": missing, "deploy": os.environ.get("DEPLOY_TARGET", "?")}
+    return {
+        "ok": not missing,
+        "missing_env": missing,
+        "deploy": os.environ.get("DEPLOY_TARGET", "?"),
+        "assemblyai": bool(os.environ.get("ASSEMBLYAI_API_KEY", "").strip()),
+    }
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        raise exc
+    if request.url.path.startswith("/health"):
+        return JSONResponse({"ok": False, "error": str(exc)[:200]}, status_code=500)
+    return HTMLResponse(
+        f"<h1>Something went wrong</h1><p>{exc}</p><p><a href='/'>Home</a></p>",
+        status_code=500,
+    )
 
 
 def _tpl(request: Request, name: str, ctx: dict):
@@ -170,6 +185,8 @@ async def intake_assist(request: Request):
     if not message:
         raise HTTPException(400, "message required")
     current = body.get("current_form") or {}
+    from intake_assist import assist_from_message
+
     try:
         result = assist_from_message(message, current)
     except Exception as exc:
@@ -272,6 +289,8 @@ async def voice_transcribe(request: Request):
     if upload is None:
         raise HTTPException(400, "Missing audio")
     data = await upload.read()
+    from assemblyai_stt import transcribe_audio
+
     try:
         text = transcribe_audio(data)
     except Exception as exc:
