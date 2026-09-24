@@ -1,4 +1,5 @@
 import hmac
+import json
 import os
 import sys
 from pathlib import Path
@@ -21,7 +22,9 @@ from db import audit, get_job, list_all_jobs, list_review_jobs, new_job, update_
 from internal_auth import verify_internal_request
 from job_queue import enqueue
 from refusal import is_refused
+from assemblyai_stt import transcribe_audio
 from render import OUTPUT_DIR, docx_bytes
+from voice_agent import new_session, process_turn, session_to_intake, welcome_message
 
 load_dotenv()
 
@@ -47,7 +50,8 @@ if _static.is_dir():
 if not _templates.is_dir():
     _templates = APP_DIR / "templates"
 templates = Jinja2Templates(directory=str(_templates)) if _templates.is_dir() else None
-templates.env.globals["free_access"] = FREE_ACCESS_MODE
+if templates is not None:
+    templates.env.globals["free_access"] = FREE_ACCESS_MODE
 _signer = URLSafeTimedSerializer(SECRET_KEY)
 
 TIERS = {
@@ -80,6 +84,63 @@ def _tpl(request: Request, name: str, ctx: dict):
     if templates is None:
         return HTMLResponse("<h1>Blueprint OS</h1><p>Templates missing on server.</p>", status_code=500)
     return templates.TemplateResponse(name, {"request": request, **ctx})
+
+
+VOICE_COOKIE = "voice_session"
+
+
+def _load_voice(cookie: Optional[str]) -> dict:
+    if not cookie:
+        return new_session()
+    try:
+        return json.loads(_signer.loads(cookie, max_age=60 * 60 * 2))
+    except BadSignature:
+        return new_session()
+
+
+def _cookie_response(data: dict, response: Response) -> Response:
+    response.set_cookie(
+        VOICE_COOKIE,
+        _signer.dumps(json.dumps(data)),
+        httponly=True,
+        samesite="lax",
+        secure=APP_URL.startswith("https://"),
+    )
+    return response
+
+
+def _start_job_after_intake(
+    *,
+    tier: str,
+    email: str,
+    company: str,
+    industry: str,
+    brief: dict,
+    input_ref: str,
+) -> RedirectResponse:
+    job_id = new_job(tier=tier, email=email, industry=industry, company=company)
+    update_job(job_id, brief=brief, sla_hours=TIERS[tier]["hours"])
+    audit(job_id, actor="client", step="intake", input_ref=input_ref, output_ref="brief")
+
+    if FREE_ACCESS_MODE:
+        update_job(job_id, stripe_payment_status="waived", status="paid")
+        audit(job_id, actor="system", step="payment", approval="free_access")
+        try:
+            enqueue("run_research_and_draft", job_id)
+        except Exception as exc:
+            audit(job_id, actor="system", step="enqueue", meta={"error": str(exc)[:300]})
+        return RedirectResponse(f"/job/{job_id}?started=1", status_code=303)
+
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        line_items=[{"price": STRIPE_PRICES[tier], "quantity": 1}],
+        customer_email=email,
+        success_url=f"{APP_URL}/job/{job_id}?paid=1",
+        cancel_url=f"{APP_URL}/intake?tier={tier}",
+        metadata={"job_id": job_id, "tier": tier},
+    )
+    update_job(job_id, stripe_session_id=session.id, stripe_payment_status="pending")
+    return RedirectResponse(session.url, status_code=303)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -123,26 +184,20 @@ async def intake_submit(
         "geography": geography,
         "budget_band": budget_band,
     }
-    job_id = new_job(tier=tier, email=email, industry=industry, company=company)
-    update_job(job_id, brief=brief, sla_hours=TIERS[tier]["hours"])
-    audit(job_id, actor="client", step="intake", input_ref="web_form", output_ref="brief")
-
-    if FREE_ACCESS_MODE:
-        update_job(job_id, stripe_payment_status="waived", status="paid")
-        audit(job_id, actor="system", step="payment", approval="free_access")
-        enqueue("run_research_and_draft", job_id)
-        return RedirectResponse(f"/job/{job_id}?started=1", status_code=303)
-
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        line_items=[{"price": STRIPE_PRICES[tier], "quantity": 1}],
-        customer_email=email,
-        success_url=f"{APP_URL}/job/{job_id}?paid=1",
-        cancel_url=f"{APP_URL}/intake?tier={tier}",
-        metadata={"job_id": job_id, "tier": tier},
-    )
-    update_job(job_id, stripe_session_id=session.id, stripe_payment_status="pending")
-    return RedirectResponse(session.url, status_code=303)
+    try:
+        return _start_job_after_intake(
+            tier=tier,
+            email=email,
+            company=company,
+            industry=industry,
+            brief=brief,
+            input_ref="web_form",
+        )
+    except Exception as exc:
+        return HTMLResponse(
+            f"<h1>Could not start blueprint</h1><p>{exc}</p><p><a href='/intake'>Back</a></p>",
+            status_code=500,
+        )
 
 
 @app.post("/webhook/stripe")
@@ -181,6 +236,71 @@ async def internal_job(task: str, job_id: str, request: Request):
     else:
         raise HTTPException(404, "Unknown task")
     return {"ok": True}
+
+
+@app.get("/voice", response_class=HTMLResponse)
+def voice_page(request: Request, voice_session: Optional[str] = Cookie(None)):
+    _ = voice_session
+    session = new_session()
+    resp = _tpl(request, "voice.html", {"welcome": welcome_message()})
+    return _cookie_response(session, resp)
+
+
+@app.post("/voice/transcribe")
+async def voice_transcribe(request: Request):
+    form = await request.form()
+    upload = form.get("audio")
+    if upload is None:
+        raise HTTPException(400, "Missing audio")
+    data = await upload.read()
+    try:
+        text = transcribe_audio(data)
+    except Exception as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"text": text}
+
+
+@app.post("/voice/turn")
+async def voice_turn(request: Request, voice_session: Optional[str] = Cookie(None)):
+    body = await request.json()
+    session = _load_voice(voice_session)
+    session, reply, ready = process_turn(session, body.get("text", ""))
+    out = JSONResponse({"reply": reply, "ready": ready})
+    return _cookie_response(session, out)
+
+
+@app.post("/voice/submit")
+async def voice_submit(voice_session: Optional[str] = Cookie(None)):
+    session = _load_voice(voice_session)
+    payload = session_to_intake(session)
+    if not payload:
+        raise HTTPException(400, "Incomplete voice session")
+    refused, reason = is_refused(payload["problem"] + " " + payload["goal"])
+    if refused:
+        raise HTTPException(422, reason)
+    tier = payload["tier"]
+    if tier not in TIERS:
+        tier = "standard"
+    brief = {
+        "problem": payload["problem"],
+        "goal": payload["goal"],
+        "constraints": payload["constraints"],
+        "timeline": payload["timeline"],
+        "geography": payload["geography"],
+        "budget_band": payload["budget_band"],
+    }
+    try:
+        redirect = _start_job_after_intake(
+            tier=tier,
+            email=payload["email"],
+            company=payload["company"],
+            industry=payload["industry"],
+            brief=brief,
+            input_ref="voice_agent",
+        )
+        return JSONResponse({"redirect": str(redirect.headers.get("location", "/"))})
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @app.get("/job/{job_id}", response_class=HTMLResponse)

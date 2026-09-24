@@ -30,3 +30,4 @@ pre { background:#f6f6f6; padding:12px; border-radius:6px; overflow:auto; }
 .deliverable-card h2 { margin-top:0; font-size:1.15rem; }
 .deliverable-card.pending { background:#fff; }
 .btn-lg { padding:12px 20px; font-size:15px; margin-top:8px; }
+.voice-controls { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; }
