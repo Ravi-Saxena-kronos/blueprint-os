@@ -1,6 +1,7 @@
 # Enqueue orchestrator work: RQ on Docker, QStash on Vercel.
 import os
 from typing import Literal
+from urllib.parse import quote
 
 import httpx
 
@@ -28,7 +29,16 @@ def _enqueue_rq(task: TaskName, job_id: str) -> None:
     q.enqueue(f"orchestrator.{task}", job_id, job_timeout=timeout)
 
 
+def _qstash_disabled() -> bool:
+    return os.environ.get("QSTASH_DISABLED", "").strip().lower() in ("1", "true", "yes")
+
+
 def _enqueue_qstash(task: TaskName, job_id: str) -> None:
+    if _qstash_disabled():
+        raise RuntimeError(
+            "QStash disabled (QSTASH_DISABLED=1). Job will run via inline orchestrator on the status page."
+        )
+
     token = os.environ.get("QSTASH_TOKEN", "").strip()
     app_url = os.environ.get("APP_URL", "").rstrip("/")
     if not app_url:
@@ -41,15 +51,25 @@ def _enqueue_qstash(task: TaskName, job_id: str) -> None:
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "Upstash-Forward-Authorization": f"Bearer {secret}" if secret else "",
         }
+        if secret:
+            headers["Upstash-Forward-Authorization"] = f"Bearer {secret}"
         base = os.environ.get("QSTASH_URL", "https://qstash.upstash.io").rstrip("/")
+        # Destination URL must be encoded in the publish path (required on some QStash regions).
+        publish_url = f"{base}/v2/publish/{quote(target, safe='')}"
         r = httpx.post(
-            f"{base}/v2/publish/{target}",
+            publish_url,
             headers=headers,
             content=b"{}",
             timeout=30.0,
         )
+        if r.status_code in (401, 403):
+            hint = (
+                "QStash rejected the token (403/401). In Upstash Console open QStash (same region as "
+                "QSTASH_URL), copy the QSTASH_TOKEN (not Redis password). Or set QSTASH_DISABLED=1 to "
+                "run blueprints inline without QStash."
+            )
+            raise RuntimeError(f"{r.status_code} Forbidden — {hint} Body: {r.text[:200]}")
         r.raise_for_status()
         return
 

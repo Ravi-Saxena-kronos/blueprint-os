@@ -5,22 +5,31 @@ from __future__ import annotations
 import os
 
 from db import (
-    audit,
     count_enqueue_attempts,
     get_job,
+    last_enqueue_error,
     orchestrator_started,
     try_claim_job,
     update_job,
 )
-from job_queue import enqueue
+from job_queue import enqueue, _qstash_disabled
 
 
 def _inline_allowed() -> bool:
     return os.environ.get("INLINE_ORCHESTRATOR", "1").strip() not in ("0", "false", "no")
 
 
+def _qstash_auth_failed(msg: str | None) -> bool:
+    if not msg:
+        return False
+    m = msg.lower()
+    return any(x in m for x in ("403", "401", "forbidden", "rejected the token", "qstash disabled"))
+
+
 def kick_enqueue(job_id: str) -> str | None:
     """Publish background work to QStash. Returns error message or None on success."""
+    from db import audit
+
     try:
         enqueue("run_research_and_draft", job_id)
         audit(job_id, actor="system", step="enqueue", approval="published")
@@ -50,8 +59,7 @@ def _run_inline(job_id: str) -> None:
 
 def ensure_job_running(job_id: str, *, allow_inline: bool = True) -> None:
     """
-    Called from the status page when a job looks stuck on paid/queued/processing.
-    Retries QStash; optionally runs the orchestrator in-process if the worker never started.
+    Retries QStash when useful; runs the orchestrator in-process when QStash fails or is disabled.
     """
     job = get_job(job_id)
     if not job:
@@ -64,28 +72,18 @@ def ensure_job_running(job_id: str, *, allow_inline: bool = True) -> None:
     if status == "processing":
         return
 
-    attempts = count_enqueue_attempts(job_id)
-    err: str | None = None
-    if attempts < 4:
+    prev_err = last_enqueue_error(job_id)
+    skip_qstash = _qstash_disabled() or _qstash_auth_failed(prev_err)
+
+    err: str | None = prev_err
+    if not skip_qstash and count_enqueue_attempts(job_id) < 2:
         err = kick_enqueue(job_id)
+        if _qstash_auth_failed(err):
+            skip_qstash = True
         if orchestrator_started(job_id):
             return
 
     if not allow_inline or not _inline_allowed():
-        if err and allow_inline:
-            brief = job.get("brief") or {}
-            update_job(
-                job_id,
-                status="error",
-                brief={
-                    **brief,
-                    "last_error": (
-                        f"Background worker did not start: {err}. "
-                        "Set QSTASH_TOKEN, APP_URL=https://blueprint-os-xi.vercel.app, "
-                        "INTERNAL_JOB_SECRET, and GROQ_API_KEY on Vercel."
-                    ),
-                },
-            )
         return
 
     if try_claim_job(job_id):

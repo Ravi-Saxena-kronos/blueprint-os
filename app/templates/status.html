@@ -39,6 +39,7 @@
   <p id="status-hint">Starting background worker…</p>
   {% if enqueue_err %}
   <p class="note">Worker note: {{ enqueue_err }}</p>
+  <p class="note">If QStash shows 403, set <strong>QSTASH_DISABLED=1</strong> on Vercel (or fix QSTASH_TOKEN). This page will run the blueprint inline automatically.</p>
   {% endif %}
   <p class="note">Flow: paid → researching → delivered (download appears above).</p>
 </section>
@@ -66,7 +67,7 @@
     } catch (_) {}
     setTimeout(tick, 12000);
   }
-  setTimeout(tick, 3000);
+  tick();
 })();
 </script>
 {% endif %}
