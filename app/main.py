@@ -46,6 +46,25 @@ TIERS = {
 }
 
 
+def _env_ok() -> list[str]:
+    missing = []
+    if not os.environ.get("DATABASE_URL", "").strip():
+        missing.append("DATABASE_URL")
+    if not os.environ.get("OPENAI_API_KEY", "").strip():
+        missing.append("OPENAI_API_KEY")
+    if not os.environ.get("INTERNAL_JOB_SECRET", "").strip():
+        missing.append("INTERNAL_JOB_SECRET")
+    if not os.environ.get("QSTASH_TOKEN", "").strip():
+        missing.append("QSTASH_TOKEN")
+    return missing
+
+
+@app.get("/health")
+def health():
+    missing = _env_ok()
+    return {"ok": not missing, "missing_env": missing, "deploy": os.environ.get("DEPLOY_TARGET", "?")}
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "tiers": TIERS})

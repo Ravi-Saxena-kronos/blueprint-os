@@ -5,7 +5,10 @@ from typing import Optional
 from docx import Document
 
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/tmp/blueprint-output")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+try:
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+except OSError:
+    pass
 
 
 def _build_document(job: dict) -> Document:

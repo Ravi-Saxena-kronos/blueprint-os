@@ -6,11 +6,15 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-DB_URL = os.environ["DATABASE_URL"]
+def _db_url() -> str:
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set")
+    return url
 
 
 def conn():
-    return psycopg.connect(DB_URL, row_factory=dict_row)
+    return psycopg.connect(_db_url(), row_factory=dict_row)
 
 
 def new_job(tier: str, email: str, industry: Optional[str], company: Optional[str]) -> str:
