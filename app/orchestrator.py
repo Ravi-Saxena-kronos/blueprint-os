@@ -58,7 +58,7 @@ def step_plan(brief: dict, classification: dict, research: dict) -> tuple[dict, 
         {"brief": brief, "classification": classification, "sources": research},
         ensure_ascii=False,
     )
-    return json_call(PLAN_SYS, user, max_tokens=3500)
+    return json_call(PLAN_SYS, user, max_tokens=6000)
 
 
 def step_verify(blueprint: dict) -> tuple[dict, int]:

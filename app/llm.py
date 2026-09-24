@@ -152,20 +152,49 @@ def spend_ok(already_cents: int) -> bool:
     return already_cents < CEILING
 
 
-def _parse_json(text: str) -> dict:
-    raw = (text or "").strip()
-    if not raw:
-        return {}
+def _strip_fences(raw: str) -> str:
+    raw = (raw or "").strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
         raw = re.sub(r"\s*```\s*$", "", raw)
+    return raw.strip()
+
+
+def _parse_json(text: str) -> dict:
+    raw = _strip_fences(text)
+    if not raw:
+        return {}
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        start, end = raw.find("{"), raw.rfind("}")
-        if start >= 0 and end > start:
-            return json.loads(raw[start : end + 1])
-        raise
+        return _repair_json(raw)
+
+
+def _repair_json(raw: str) -> dict:
+    """Best-effort parse for truncated or slightly invalid model JSON."""
+    start = raw.find("{")
+    if start < 0:
+        raise json.JSONDecodeError("No JSON object", raw, 0)
+    s = raw[start:]
+    end = s.rfind("}")
+    if end > 0:
+        chunk = s[: end + 1]
+        for candidate in (chunk, re.sub(r",\s*([}\]])", r"\1", chunk)):
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+    # Truncated output: close open strings lightly and balance braces.
+    s = re.sub(r",\s*$", "", s.rstrip())
+    if s.count('"') % 2 == 1:
+        s += '"'
+    while s.count("{") + s.count("[") > s.count("}") + s.count("]"):
+        if s.count("[") > s.count("]"):
+            s += "]"
+        else:
+            s += "}"
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+    return json.loads(s)
 
 
 def _wrap_err(exc: Exception, provider: str) -> LLMUserError:
